@@ -2,7 +2,19 @@ import credentials
 from pushover import init, Client
 import requests
 from requests_html import HTMLSession
+import sqlite3
+import os
 
+#Datenbank erstellen, wenn nicht vorhanden
+if not os.path.isfile('noten.db'):
+	conn = sqlite3.connect('noten.db')
+	cursor = conn.cursor()
+	cursor.execute('CREATE TABLE noten (id integer PRIMARY KEY, semester TEXT, termin TEXT, fach TEXT, note TEXT)')
+	conn.commit()
+else:
+	conn = sqlite3.connect('noten.db')
+	cursor = conn.cursor()
+	
 #Session besorgen
 base_url = "https://www.studse.rfh-koeln.de/?func=login_check"
 payload = {'Benutzer': credentials.rfh_matrikelnr, 'pwd1': credentials.rfh_password}
@@ -27,13 +39,13 @@ for zeile in zeilen:
 	#Leerzeilen ignorieren
 	if content == '':
 		continue
-
+		
 	#Herausfinden was für eine Zeile
 	infos = zeile.find('td', first=True)
 	css_class = infos.attrs['class']
 
 	if css_class[0] == 'header_top':
-		print('')
+		continue
 	elif css_class[0] == 'semester_bez':
 		semester = zeile.text
 	elif css_class[0] == 'termin_bez':
@@ -48,11 +60,28 @@ for zeile in zeilen:
 				note = zelle.text
 			int = int + 1
 
+		#Prüfen ob Eintrag in Datenbank, wenn nicht, dann Eintragen
+		cursor.execute('SELECT COUNT(*) FROM noten WHERE semester = "'+semester+'" AND termin = "'+termin+'" AND fach = "'+fach+'" AND note = "'+note+'"')
+		result=cursor.fetchone()
+		
+		if result[0] == 0:
+			cursor.execute('INSERT INTO noten (semester, termin, fach, note) VALUES ("'+semester+'","'+termin+'","'+fach+'","'+note+'")')
+			conn.commit()
+			continue
+		
+		#Prüfen ob vielleicht schon drin, aber mit anderer Note
+		cursor.execute('SELECT note FROM noten WHERE semester = "'+semester+'" AND termin = "'+termin+'" AND fach = "'+fach+'"')
+		result=cursor.fetchone()
+		
+		if result[0] != note:
+			#In Datenbank ändern
+			cursor.execute('UPDATE noten SET note = "'+note+'" WHERE semester = "'+semester+'" AND termin = "'+termin+'" AND fach = "'+fach+'"')
+			conn.commit()
+			
+			#Benachrichtigung senden
+			init(credentials.pushover_token)
+			Client(credentials.pushover_secret).send_message(fach+' - '+note, title="RFH Noten")
+			print('Nachfolgende Note geändert:')
+		
+		
 		print(semester + ' - ' + termin + ' - ' + fach + ' - ' + note)
-	#print(css_class[0])
-	#print(i.text)
-
-#Bei Änderung benachrichtigen
-#init(credentials.pushover_token)
-#Client(credentials.pushover_secret).send_message("Fach - Note", title="RFH Noten")
-
